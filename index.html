@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f6feb">
+<title>Bike Allocation – Camera Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:Arial,sans-serif;margin:0;background:#f5f7fa;color:#1f2937}
+  .wrap{max-width:620px;margin:auto;padding:16px}
+  .card{background:#fff;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 1px 6px #0001}
+  h1{font-size:24px;margin:4px 0 8px}
+  h2{font-size:18px;margin:0 0 10px}
+  .small{font-size:13px;color:#64748b}
+  button{width:100%;padding:14px;border:0;border-radius:10px;background:#1f6feb;color:#fff;font-weight:700;font-size:16px;margin:5px 0;cursor:pointer}
+  button.secondary{background:#64748b}
+  button.warn{background:#d97706}
+  #reader{width:100%;max-width:520px;margin:10px auto;overflow:hidden;border-radius:10px}
+  .status{padding:12px;border-radius:10px;background:#eff6ff;margin-top:10px}
+  .ok{background:#f0fdf4;color:#166534}
+  .bad{background:#fef2f2;color:#991b1b}
+  .context{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .context div{background:#f8fafc;padding:10px;border-radius:8px}
+  input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;margin:5px 0}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🚲 Bike QR Scanner</h1>
+    <div class="small">External camera scanner for Bike Allocation</div>
+    <div class="context" style="margin-top:12px">
+      <div><span class="small">Action</span><br><b id="action">SCAN</b></div>
+      <div><span class="small">Trip</span><br><b id="trip">—</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📷 Camera</h2>
+    <div class="small">This page is hosted independently from Google Apps Script so Chrome can request camera access normally.</div>
+    <button id="startBtn" onclick="startCamera()">Start camera</button>
+    <button class="secondary" onclick="stopCamera()">Stop camera</button>
+    <div id="reader"></div>
+    <div id="status" class="status">Ready. Press <b>Start camera</b>.</div>
+  </div>
+
+  <div class="card">
+    <h2>📸 Photo fallback</h2>
+    <div class="small">If live camera access is unavailable, take a photo containing the QR code.</div>
+    <input id="qrFile" type="file" accept="image/*" capture="environment" onchange="scanImageFile(event)">
+  </div>
+
+  <div class="card">
+    <h2>⌨️ Manual fallback</h2>
+    <input id="manualId" placeholder="BR-0001" autocapitalize="characters" autocomplete="off" spellcheck="false">
+    <button class="warn" onclick="sendPayload(document.getElementById('manualId').value.trim(),'MANUAL')">Send Bike ID</button>
+  </div>
+</div>
+
+<script>
+let qrScanner=null;
+let scanning=false;
+const params=new URLSearchParams(window.location.search);
+const nonce=params.get('nonce')||'';
+const targetOrigin=params.get('targetOrigin')||'*';
+const openerWindow=window.opener;
+
+document.getElementById('action').textContent=params.get('action')||'SCAN';
+document.getElementById('trip').textContent=params.get('trip')||'—';
+
+window.addEventListener('message', function(event){
+  const d=event && event.data;
+  if(!d || d.type!=='BIKE_CAMERA_COMMAND' || d.nonce!==nonce) return;
+  if(d.command==='STOP') stopCamera();
+});
+
+function setStatus(html, cls){
+  const el=document.getElementById('status');
+  el.className='status'+(cls?' '+cls:'');
+  el.innerHTML=html;
+}
+
+async function startCamera(){
+  if(scanning) return;
+  if(!window.isSecureContext){
+    setStatus('❌ Camera requires HTTPS. Open this scanner through its GitHub Pages <b>https://</b> URL.', 'bad');
+    return;
+  }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setStatus('❌ This browser does not expose camera access here. Use the photo or manual fallback.', 'bad');
+    return;
+  }
+  scanning=true;
+  setStatus('⏳ Requesting camera permission…');
+  try{
+    qrScanner=new Html5Qrcode('reader');
+    await qrScanner.start(
+      {facingMode:{ideal:'environment'}},
+      {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
+      function(decodedText){
+        sendPayload(decodedText,'CAMERA');
+      },
+      function(){ /* ignore frame-by-frame decode misses */ }
+    );
+    setStatus('📷 Camera active. Point the rear camera at the bike QR code.');
+  }catch(e){
+    scanning=false;
+    safeClearScanner();
+    let msg=e && e.message ? e.message : String(e);
+    if(String(e).includes('NotAllowedError') || String(e).includes('Permission denied')){
+      msg='Chrome refused camera access. Check Chrome camera permission for this GitHub Pages site, then reload this page.';
+    }
+    setStatus('❌ '+escapeHtml(msg)+'<br><br>Use the photo or manual fallback if necessary.','bad');
+  }
+}
+
+function stopCamera(){
+  safeStopScanner();
+  setStatus('Camera stopped. Press <b>Start camera</b> to scan again.');
+}
+
+function safeStopScanner(){
+  if(qrScanner){
+    try{qrScanner.stop().catch(()=>{});}catch(e){}
+    safeClearScanner();
+  }
+  scanning=false;
+}
+function safeClearScanner(){
+  if(qrScanner){
+    try{qrScanner.clear();}catch(e){}
+    qrScanner=null;
+  }
+}
+
+async function scanImageFile(event){
+  const file=event.target.files && event.target.files[0];
+  if(!file) return;
+  try{
+    setStatus('⏳ Reading QR code from image…');
+    const imageScanner=new Html5Qrcode('reader');
+    const txt=await imageScanner.scanFile(file,true);
+    try{imageScanner.clear();}catch(e){}
+    sendPayload(txt,'PHOTO');
+  }catch(e){
+    setStatus('❌ QR code could not be read. Retake the photo with the entire QR code visible, or use manual entry.','bad');
+  }finally{
+    event.target.value='';
+  }
+}
+
+function sendPayload(payload, source){
+  payload=String(payload||'').trim();
+  if(!payload){
+    setStatus('❌ Empty Bike ID / QR payload.','bad');
+    return;
+  }
+  safeStopScanner();
+  const message={type:'BIKE_CAMERA_SCAN',status:'SCANNED',payload,source,nonce};
+  try{
+    if(openerWindow && !openerWindow.closed){
+      openerWindow.postMessage(message,targetOrigin==='null'?'*':targetOrigin);
+      setStatus('✅ Scan sent to Bike Allocation.<br><br>You can return to the Bike Allocation tab.','ok');
+      setTimeout(()=>{try{window.close();}catch(e){}},700);
+    }else{
+      setStatus('✅ QR decoded: <b>'+escapeHtml(payload)+'</b><br><br>No parent Bike Allocation window was found. Copy this value and enter it in the application.','ok');
+    }
+  }catch(e){
+    setStatus('❌ Could not return the scan to Bike Allocation. Use the decoded value manually: <b>'+escapeHtml(payload)+'</b>','bad');
+  }
+}
+
+function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+</script>
+</body>
+</html>
