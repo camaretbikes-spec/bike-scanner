@@ -49,8 +49,8 @@
 
   <div class="card">
     <h2>📸 Photo fallback</h2>
-    <div class="small">If live camera access is unavailable, take a photo containing the QR code.</div>
-    <input id="qrFile" type="file" accept="image/*" capture="environment" onchange="scanImageFile(event)">
+    <div class="small">Choose an existing QR image from your files/gallery, or use the camera option offered by your phone. The file picker is not forced to open the camera.</div>
+    <input id="qrFile" type="file" accept="image/*" onchange="scanImageFile(event)">
   </div>
 
   <div class="card">
@@ -97,9 +97,18 @@ async function startCamera(){
   setStatus('⏳ Requesting camera permission…');
   try{
     qrScanner=new Html5Qrcode('reader');
+    // Use an actual camera ID rather than a facingMode constraint. This avoids
+    // the 'facingMode should be string or object with exact as key' error.
+    const cameras = await Html5Qrcode.getCameras();
+    if(!cameras || !cameras.length) throw new Error('No camera was found by this browser.');
+    const backCamera = cameras.find(c => /back|rear|environment|arriere|arrière|trasera|posteriore/i.test(c.label||''));
+    const selectedCamera = backCamera || cameras[cameras.length-1];
     await qrScanner.start(
-      {facingMode:'environment'},
-      {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
+      selectedCamera.id,
+      {fps:10,qrbox:(viewWidth,viewHeight)=>{
+        const size=Math.floor(Math.min(viewWidth,viewHeight,300)*0.78);
+        return {width:size,height:size};
+      },aspectRatio:1.0},
       function(decodedText){
         sendPayload(decodedText,'CAMERA');
       },
