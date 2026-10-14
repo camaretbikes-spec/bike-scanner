@@ -98,7 +98,7 @@ async function startCamera(){
   try{
     qrScanner=new Html5Qrcode('reader');
     await qrScanner.start(
-      {facingMode:{ideal:'environment'}},
+      {facingMode:'environment'},
       {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
       function(decodedText){
         sendPayload(decodedText,'CAMERA');
